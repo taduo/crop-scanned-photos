@@ -8,7 +8,7 @@ The script does not use an LLM. It uses image processing to:
 - find image files in a folder,
 - detect printed-photo regions against a bright white scanner bed,
 - save each detected photo as a separate JPEG,
-- preserve a small edge around each printed photo,
+- trim close to each printed photo with only a tiny default margin,
 - create a `contact_sheet.jpg` preview with filenames underneath.
 
 Original scan files are read only. They are not modified.
@@ -64,11 +64,11 @@ Diagnostics are written to:
 cropped/diagnostics/
 ```
 
-Review `cropped/contact_sheet.jpg` after each run. If the red boxes or crops look
-too tight, increase the edge margin:
+Review `cropped/contact_sheet.jpg` after each run. The default crop margin is
+tight: 2 pixels. If the red boxes or crops look too tight, increase it:
 
 ```bash
-python3 crop_scanned_photos.py --edge-margin 30
+python3 crop_scanned_photos.py --edge-margin 12
 ```
 
 JPEG crop quality defaults to 95. To change it:
@@ -84,11 +84,11 @@ files before writing JPEGs:
 python3 crop_scanned_photos.py --clean-output
 ```
 
-If the script includes too much scanner bed or misses very pale photo borders,
-adjust the scanner-bed threshold:
+If the script still includes too much scanner bed, classify more light pixels as
+bed:
 
 ```bash
-python3 crop_scanned_photos.py --bed-min-brightness 245 --bed-max-chroma 12
+python3 crop_scanned_photos.py --bed-min-brightness 230 --bed-max-chroma 12
 ```
 
 Lower `--bed-min-brightness` makes the script classify more light pixels as bed.

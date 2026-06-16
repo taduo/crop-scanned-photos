@@ -74,9 +74,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--edge-margin",
-        default=18,
+        default=2,
         type=int,
-        help="Full-resolution safety margin, in pixels, added around each crop.",
+        help="Full-resolution margin, in pixels, added around each tight crop.",
     )
     parser.add_argument(
         "--jpeg-quality",
@@ -224,6 +224,28 @@ def split_overlapping_boxes(boxes: list[list[int]]) -> None:
                     a[1] = split
 
 
+def meaningful_bounds(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    height, width = mask.shape
+    row_min = max(3, int(width * 0.01))
+    col_min = max(3, int(height * 0.01))
+    meaningful_rows = np.flatnonzero(mask.sum(axis=1) >= row_min)
+    meaningful_cols = np.flatnonzero(mask.sum(axis=0) >= col_min)
+
+    if len(meaningful_rows) == 0 or len(meaningful_cols) == 0:
+        return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+    return (
+        int(meaningful_cols.min()),
+        int(meaningful_rows.min()),
+        int(meaningful_cols.max()) + 1,
+        int(meaningful_rows.max()) + 1,
+    )
+
+
 def detect_boxes(image: Image.Image, args: argparse.Namespace) -> list[tuple[int, int, int, int]]:
     width, height = image.size
     small_width = args.small_width
@@ -245,7 +267,8 @@ def detect_boxes(image: Image.Image, args: argparse.Namespace) -> list[tuple[int
     mask[:, -3:] = False
 
     # Bridge photo content into one component per print while leaving gaps between
-    # separate prints mostly intact.
+    # separate prints mostly intact. The final crop is refined against the raw
+    # mask below so this grouping expansion does not become extra white border.
     processed = erode(dilate(mask, 8), 3)
     min_area = int(args.min_area_ratio * small_width * small_height)
     components = connected_components(processed, min_area=max(1, min_area))
@@ -259,7 +282,14 @@ def detect_boxes(image: Image.Image, args: argparse.Namespace) -> list[tuple[int
         if area < args.min_area_ratio * small_width * small_height:
             continue
 
-        small_pad = 9
+        bounds = meaningful_bounds(mask[y1:y2, x1:x2])
+        if bounds is None:
+            continue
+
+        bx1, by1, bx2, by2 = bounds
+        x1, y1, x2, y2 = x1 + bx1, y1 + by1, x1 + bx2, y1 + by2
+
+        small_pad = 0
         x1 = max(0, x1 - small_pad)
         y1 = max(0, y1 - small_pad)
         x2 = min(small_width, x2 + small_pad)
@@ -354,10 +384,17 @@ def write_contact_sheet(crop_paths: list[Path], output_path: Path) -> None:
     for crop_path in crop_paths:
         image = Image.open(crop_path).convert("RGB")
         image.thumbnail((thumb_width, thumb_width), Image.Resampling.LANCZOS)
-        cell = Image.new("RGB", (thumb_width, thumb_width + label_height), "white")
-        cell.paste(image, ((thumb_width - image.width) // 2, (thumb_width - image.height) // 2))
-
+        cell = Image.new("RGB", (thumb_width, thumb_width + label_height), (218, 218, 218))
         draw = ImageDraw.Draw(cell)
+        draw.rectangle((0, thumb_width, thumb_width, thumb_width + label_height), fill=(245, 245, 245))
+        paste_x = (thumb_width - image.width) // 2
+        paste_y = (thumb_width - image.height) // 2
+        cell.paste(image, (paste_x, paste_y))
+        draw.rectangle(
+            (paste_x, paste_y, paste_x + image.width - 1, paste_y + image.height - 1),
+            outline=(160, 160, 160),
+        )
+
         label = crop_path.name
         bbox = draw.textbbox((0, 0), label, font=font)
         text_width = bbox[2] - bbox[0]
